@@ -14,7 +14,6 @@ You remain in complete control of the plot, characters, dialogue, and every crea
 ❦ Features
 
 •Professional screenplay editor
-
 •story board creator.
 •Writing assistance with ai
 •Scene organization and management
