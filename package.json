@@ -1,0 +1,29 @@
+{
+  "name": "screenplay-editor",
+  "version": "1.0.0",
+  "description": "A professional, frictionless screenplay editor with smart auto-formatting, WGA-standard block types, dark mode, focus mode, and PDF export.",
+  "private": true,
+  "type": "module",
+  "author": "Amol Kore",
+  "keywords": [
+    "screenplay",
+    "screenwriting",
+    "editor",
+    "WGA",
+    "fountain",
+    "react"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.0.2",
+    "vite": "^8.0.12"
+  }
+}
