@@ -1295,8 +1295,8 @@ const ScreenplayEditor = () => {
         }
 
         .topbar-action-btn.btn-save:hover {
-          background: var(--amber-hover);
-          box-shadow: 0 4px 14px rgba(217, 119, 6, 0.35);
+          background: #E8890A;
+          box-shadow: 0 4px 14px rgba(232, 137, 10, 0.35);
         }
 
         .topbar-action-btn.btn-import {
@@ -1304,8 +1304,8 @@ const ScreenplayEditor = () => {
         }
 
         .topbar-action-btn.btn-import:hover {
-          background: var(--amber-hover);
-          box-shadow: 0 4px 14px rgba(217, 119, 6, 0.35);
+          background: #E8890A;
+          box-shadow: 0 4px 14px rgba(232, 137, 10, 0.35);
         }
 
         .topbar-action-btn.btn-export {
@@ -1314,8 +1314,8 @@ const ScreenplayEditor = () => {
         }
 
         .topbar-action-btn.btn-export:hover {
-          background: var(--amber-hover);
-          box-shadow: 0 4px 14px rgba(217, 119, 6, 0.35);
+          background: #E8890A;
+          box-shadow: 0 4px 14px rgba(232, 137, 10, 0.35);
         }
 
         .topbar-btn-icon {
@@ -1349,11 +1349,11 @@ const ScreenplayEditor = () => {
           top: calc(100% + 8px);
           right: 0;
           width: 200px;
-          background: #1A1917;
-          border: 1px solid #2E2B28;
+          background: #FFFFFF;
+          border: 1px solid #EDE9E3;
           border-radius: 12px;
           padding: 6px;
-          box-shadow: 0 12px 40px rgba(0,0,0,0.25);
+          box-shadow: 0 12px 40px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.06);
           z-index: 500;
           opacity: 0;
           transform: translateY(-4px);
@@ -1372,7 +1372,7 @@ const ScreenplayEditor = () => {
           padding: 10px 12px;
           border: none;
           background: transparent;
-          color: #E8E3DB;
+          color: #3D3833;
           font-family: var(--font-ui);
           font-size: 12px;
           font-weight: 500;
@@ -1383,7 +1383,7 @@ const ScreenplayEditor = () => {
         }
 
         .export-dropdown-item:hover {
-          background: #2A2520;
+          background: #FEF9EE;
           padding-left: 15px;
         }
 
@@ -1404,15 +1404,15 @@ const ScreenplayEditor = () => {
         .export-item-ext {
           font-family: var(--font-mono);
           font-size: 9px;
-          color: #6B6460;
-          background: #2E2B28;
+          color: #9C9590;
+          background: #F5F2ED;
           padding: 2px 6px;
           border-radius: 4px;
         }
 
         .export-dropdown-divider {
           height: 1px;
-          background: #2E2B28;
+          background: #EDE9E3;
           margin: 4px 8px;
         }
 
