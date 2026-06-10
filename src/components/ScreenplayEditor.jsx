@@ -1321,6 +1321,11 @@ const ScreenplayEditor = () => {
         .topbar-btn-icon {
           font-size: 15px;
           line-height: 1;
+          transition: transform 300ms ease;
+        }
+
+        .topbar-action-btn:hover .topbar-btn-icon {
+          transform: rotate(-8deg) scale(1.1);
         }
 
         .topbar-file-input {
