@@ -12,6 +12,7 @@ This tool is not meant to create the entire script for you. Instead, it acts as 
 You remain in complete control of the plot, characters, dialogue, and every creative decision in your story. The goal is to help writers express their ideas more clearly while preserving their own voice and style.
 
 ❦ Features
+
 •Professional screenplay editor
 •story board creator.
 •Writing assistance with ai
