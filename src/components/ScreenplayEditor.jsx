@@ -135,9 +135,12 @@ const ScreenplayEditor = () => {
   const [activeBlockId, setActiveBlockId] = useState(null);
   const [saved, setSaved] = useState(false);
   const [selectedFont, setSelectedFont] = useState(FONT_OPTIONS[0].value);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [sceneNotes, setSceneNotes] = useState({});
 
   const saveTimerRef = useRef(null);
   const editorRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   // ── Derived data ──
   const wordCount = countWords(blocks);
@@ -291,6 +294,174 @@ const ScreenplayEditor = () => {
   // ── Get active block type ──
   const activeBlock = blocks.find(b => b.id === activeBlockId);
   const activeBlockType = activeBlock?.type || null;
+
+  // ── Save project to JSON file ──
+  const handleSaveProject = useCallback(() => {
+    const projectData = {
+      version: 1,
+      title: title || 'Untitled Screenplay',
+      font: selectedFont,
+      blocks: blocks,
+      sceneNotes: sceneNotes,
+      savedAt: new Date().toISOString(),
+    };
+    const json = JSON.stringify(projectData, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${(title || 'untitled-screenplay').replace(/\s+/g, '-').toLowerCase()}.screenplay.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  }, [title, selectedFont, blocks, sceneNotes]);
+
+  // ── Export as Fountain (.fountain) ──
+  const handleExportFountain = useCallback(() => {
+    let fountain = `Title: ${title || 'Untitled Screenplay'}\nCredit: Written by\nAuthor: \nDraft date: ${new Date().toLocaleDateString()}\n\n===\n\n`;
+    blocks.forEach(b => {
+      switch (b.type) {
+        case 'SCENE_HEADING':
+          fountain += `\n${b.text.toUpperCase()}\n\n`;
+          break;
+        case 'ACTION':
+          fountain += `${b.text}\n\n`;
+          break;
+        case 'CHARACTER':
+          fountain += `${b.text.toUpperCase()}\n`;
+          break;
+        case 'PARENTHETICAL':
+          fountain += `(${b.text.replace(/^\(|\)$/g, '')})\n`;
+          break;
+        case 'DIALOGUE':
+          fountain += `${b.text}\n\n`;
+          break;
+        case 'TRANSITION':
+          fountain += `> ${b.text.toUpperCase()}\n\n`;
+          break;
+        default:
+          fountain += `${b.text}\n\n`;
+      }
+    });
+    const blob = new Blob([fountain], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${(title || 'untitled-screenplay').replace(/\s+/g, '-').toLowerCase()}.fountain`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setShowExportMenu(false);
+  }, [title, blocks]);
+
+  // ── Export as FDX (Final Draft XML) ──
+  const handleExportFdx = useCallback(() => {
+    const escapeXml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const typeMap = {
+      'SCENE_HEADING': 'Scene Heading',
+      'ACTION': 'Action',
+      'CHARACTER': 'Character',
+      'PARENTHETICAL': 'Parenthetical',
+      'DIALOGUE': 'Dialogue',
+      'TRANSITION': 'Transition',
+    };
+    let paragraphs = '';
+    blocks.forEach(b => {
+      const fdxType = typeMap[b.type] || 'Action';
+      paragraphs += `    <Paragraph Type="${fdxType}">\n      <Text>${escapeXml(b.text)}</Text>\n    </Paragraph>\n`;
+    });
+    const fdx = `<?xml version="1.0" encoding="UTF-8"?>\n<FinalDraft DocumentType="Script" Template="No" Version="4">\n  <Content>\n${paragraphs}  </Content>\n  <TitlePage>\n    <Content>\n      <Paragraph Type="Title">\n        <Text>${escapeXml(title || 'Untitled Screenplay')}</Text>\n      </Paragraph>\n    </Content>\n  </TitlePage>\n</FinalDraft>\n`;
+    const blob = new Blob([fdx], { type: 'application/xml' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${(title || 'untitled-screenplay').replace(/\s+/g, '-').toLowerCase()}.fdx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setShowExportMenu(false);
+  }, [title, blocks]);
+
+  // ── Import project from file ──
+  const handleImportProject = useCallback((e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const text = evt.target.result;
+        const ext = file.name.split('.').pop().toLowerCase();
+
+        if (ext === 'json') {
+          const data = JSON.parse(text);
+          if (data.blocks && Array.isArray(data.blocks)) {
+            setBlocks(data.blocks);
+            if (data.title) setTitle(data.title);
+            if (data.font) setSelectedFont(data.font);
+            if (data.sceneNotes) setSceneNotes(data.sceneNotes);
+          }
+        } else if (ext === 'fountain') {
+          // Basic Fountain parser
+          const lines = text.split('\n');
+          const imported = [];
+          let pastHeader = false;
+          for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            if (line.trim() === '===') { pastHeader = true; continue; }
+            if (!pastHeader && (line.startsWith('Title:') || line.startsWith('Credit:') || line.startsWith('Author:') || line.startsWith('Draft date:') || line.trim() === '')) continue;
+            pastHeader = true;
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            if (/^(INT\.|EXT\.|INT\/EXT\.|I\/E\.)/.test(trimmed.toUpperCase())) {
+              imported.push({ id: newId(), type: 'SCENE_HEADING', text: trimmed });
+            } else if (trimmed.startsWith('>')) {
+              imported.push({ id: newId(), type: 'TRANSITION', text: trimmed.replace(/^>\s*/, '') });
+            } else if (/^\(.*\)$/.test(trimmed)) {
+              imported.push({ id: newId(), type: 'PARENTHETICAL', text: trimmed });
+            } else if (trimmed === trimmed.toUpperCase() && trimmed.length > 1 && /^[A-Z]/.test(trimmed)) {
+              imported.push({ id: newId(), type: 'CHARACTER', text: trimmed });
+            } else if (imported.length > 0 && (imported[imported.length - 1].type === 'CHARACTER' || imported[imported.length - 1].type === 'PARENTHETICAL')) {
+              imported.push({ id: newId(), type: 'DIALOGUE', text: trimmed });
+            } else {
+              imported.push({ id: newId(), type: 'ACTION', text: trimmed });
+            }
+          }
+          if (imported.length > 0) setBlocks(imported);
+        } else if (ext === 'fdx') {
+          // Basic FDX parser
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(text, 'application/xml');
+          const paragraphs = doc.querySelectorAll('Paragraph');
+          const imported = [];
+          const fdxTypeMap = {
+            'Scene Heading': 'SCENE_HEADING', 'Action': 'ACTION',
+            'Character': 'CHARACTER', 'Parenthetical': 'PARENTHETICAL',
+            'Dialogue': 'DIALOGUE', 'Transition': 'TRANSITION',
+          };
+          paragraphs.forEach(p => {
+            const type = fdxTypeMap[p.getAttribute('Type')] || 'ACTION';
+            const textEl = p.querySelector('Text');
+            const txt = textEl ? textEl.textContent : '';
+            if (txt.trim()) imported.push({ id: newId(), type, text: txt });
+          });
+          if (imported.length > 0) setBlocks(imported);
+        }
+
+        setActiveBlockId(null);
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2000);
+      } catch (err) {
+        console.error('Failed to import screenplay:', err);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  }, []);
 
   return (
     <>
@@ -528,30 +699,6 @@ const ScreenplayEditor = () => {
           transform: translateY(0px) scale(0.97);
         }
 
-        .topbar-btn-export {
-          background: var(--amber);
-          color: #FFFFFF;
-          font-size: 13px;
-          padding: 8px 16px;
-          border-radius: 8px;
-          border: none;
-          cursor: pointer;
-          font-family: var(--font-ui);
-          font-weight: 500;
-          transition: background 150ms ease, transform 150ms ease, 
-                      box-shadow 150ms ease;
-        }
-
-        .topbar-btn-export:hover {
-          background: var(--amber-hover);
-          transform: translateY(-1px);
-          box-shadow: 0 4px 14px rgba(217, 119, 6, 0.35);
-        }
-
-        .topbar-btn-export:active {
-          transform: translateY(0px) scale(0.97);
-          box-shadow: 0 2px 6px rgba(217, 119, 6, 0.2);
-        }
 
         /* ═══ BODY LAYOUT ═══ */
         .body-layout {
@@ -1117,6 +1264,153 @@ const ScreenplayEditor = () => {
           line-height: 1.6;
         }
 
+        /* ═══ SAVE / IMPORT / EXPORT BUTTONS ═══ */
+        .topbar-action-btn {
+          background: #2D2A26;
+          color: #F0EBE3;
+          border: none;
+          cursor: pointer;
+          font-family: var(--font-ui);
+          font-size: 12px;
+          font-weight: 500;
+          padding: 7px 14px;
+          border-radius: 8px;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          transition: background 150ms ease, transform 150ms ease,
+                      box-shadow 150ms ease;
+        }
+
+        .topbar-action-btn:hover {
+          transform: translateY(-1px);
+        }
+
+        .topbar-action-btn:active {
+          transform: translateY(0px) scale(0.97);
+        }
+
+        .topbar-action-btn.btn-save {
+          background: var(--amber);
+        }
+
+        .topbar-action-btn.btn-save:hover {
+          background: var(--amber-hover);
+          box-shadow: 0 4px 14px rgba(217, 119, 6, 0.35);
+        }
+
+        .topbar-action-btn.btn-import {
+          background: var(--amber);
+        }
+
+        .topbar-action-btn.btn-import:hover {
+          background: var(--amber-hover);
+          box-shadow: 0 4px 14px rgba(217, 119, 6, 0.35);
+        }
+
+        .topbar-action-btn.btn-export {
+          background: var(--amber);
+          position: relative;
+        }
+
+        .topbar-action-btn.btn-export:hover {
+          background: var(--amber-hover);
+          box-shadow: 0 4px 14px rgba(217, 119, 6, 0.35);
+        }
+
+        .topbar-btn-icon {
+          font-size: 15px;
+          line-height: 1;
+        }
+
+        .topbar-file-input {
+          display: none;
+        }
+
+        .topbar-separator-sm {
+          width: 1px;
+          height: 20px;
+          background: var(--panel-border);
+          flex-shrink: 0;
+        }
+
+        /* ═══ EXPORT DROPDOWN ═══ */
+        .export-dropdown-wrapper {
+          position: relative;
+        }
+
+        .export-dropdown {
+          position: absolute;
+          top: calc(100% + 8px);
+          right: 0;
+          width: 200px;
+          background: #1A1917;
+          border: 1px solid #2E2B28;
+          border-radius: 12px;
+          padding: 6px;
+          box-shadow: 0 12px 40px rgba(0,0,0,0.25);
+          z-index: 500;
+          opacity: 0;
+          transform: translateY(-4px);
+          animation: dropdown-in 120ms ease forwards;
+        }
+
+        @keyframes dropdown-in {
+          to { opacity: 1; transform: translateY(0); }
+        }
+
+        .export-dropdown-item {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          width: 100%;
+          padding: 10px 12px;
+          border: none;
+          background: transparent;
+          color: #E8E3DB;
+          font-family: var(--font-ui);
+          font-size: 12px;
+          font-weight: 500;
+          cursor: pointer;
+          border-radius: 8px;
+          transition: background 100ms ease, padding-left 100ms ease;
+          text-align: left;
+        }
+
+        .export-dropdown-item:hover {
+          background: #2A2520;
+          padding-left: 15px;
+        }
+
+        .export-dropdown-item:active {
+          transform: scale(0.98);
+        }
+
+        .export-item-icon {
+          font-size: 16px;
+          width: 20px;
+          text-align: center;
+        }
+
+        .export-item-label {
+          flex: 1;
+        }
+
+        .export-item-ext {
+          font-family: var(--font-mono);
+          font-size: 9px;
+          color: #6B6460;
+          background: #2E2B28;
+          padding: 2px 6px;
+          border-radius: 4px;
+        }
+
+        .export-dropdown-divider {
+          height: 1px;
+          background: #2E2B28;
+          margin: 4px 8px;
+        }
+
         /* ═══ SCROLLBAR STYLING ═══ */
         .writing-area::-webkit-scrollbar,
         .left-panel::-webkit-scrollbar,
@@ -1175,6 +1469,30 @@ const ScreenplayEditor = () => {
 
           <div className="topbar-right">
             <button
+              className="topbar-action-btn btn-save"
+              onClick={handleSaveProject}
+              title="Save Project (Ctrl+S)"
+            >
+              <span className="topbar-btn-icon">🎞️</span>
+              Save
+            </button>
+            <button
+              className="topbar-action-btn btn-import"
+              onClick={() => fileInputRef.current?.click()}
+              title="Import Screenplay"
+            >
+              <span className="topbar-btn-icon">🎥</span>
+              Import
+            </button>
+            <input
+              ref={fileInputRef}
+              className="topbar-file-input"
+              type="file"
+              accept=".json,.screenplay.json,.fountain,.fdx"
+              onChange={handleImportProject}
+            />
+            <div className="topbar-separator-sm" />
+            <button
               className="topbar-btn"
               onClick={() => setFocusMode(!focusMode)}
               title="Focus Mode (F11)"
@@ -1188,9 +1506,36 @@ const ScreenplayEditor = () => {
             >
               {darkMode ? '☀️' : '🌙'}
             </button>
-            <button className="topbar-btn-export" title="Export PDF">
-              Export PDF
-            </button>
+            <div className="export-dropdown-wrapper">
+              <button
+                className="topbar-action-btn btn-export"
+                onClick={() => setShowExportMenu(!showExportMenu)}
+                title="Export Screenplay"
+              >
+                <span className="topbar-btn-icon">🎬</span>
+                Export ▾
+              </button>
+              {showExportMenu && (
+                <div className="export-dropdown">
+                  <button className="export-dropdown-item" onClick={() => { setShowExportMenu(false); /* PDF later */ }}>
+                    <span className="export-item-icon">📄</span>
+                    <span className="export-item-label">PDF Document</span>
+                    <span className="export-item-ext">.pdf</span>
+                  </button>
+                  <button className="export-dropdown-item" onClick={handleExportFountain}>
+                    <span className="export-item-icon">⛲</span>
+                    <span className="export-item-label">Fountain</span>
+                    <span className="export-item-ext">.fountain</span>
+                  </button>
+                  <div className="export-dropdown-divider" />
+                  <button className="export-dropdown-item" onClick={handleExportFdx}>
+                    <span className="export-item-icon">🎯</span>
+                    <span className="export-item-label">Final Draft</span>
+                    <span className="export-item-ext">.fdx</span>
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </header>
 
@@ -1329,6 +1674,8 @@ const ScreenplayEditor = () => {
                   <textarea
                     className="note-card-textarea"
                     placeholder="Notes for this scene..."
+                    value={sceneNotes[scene.id] || ''}
+                    onChange={(e) => setSceneNotes(prev => ({ ...prev, [scene.id]: e.target.value }))}
                     onClick={(e) => e.stopPropagation()}
                     rows={2}
                   />
