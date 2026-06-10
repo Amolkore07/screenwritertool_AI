@@ -1,21 +1,303 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 
 /* ═══════════════════════════════════════════════════════════════
-   PART 1 — Layout Shell, Design Tokens, Typography, Panels
-   A beautiful, static shell for the screenplay editor.
+   SCREENPLAY EDITOR — Part 1 + Part 2
+   Layout Shell + Core Editor Engine with Block Types
    ═══════════════════════════════════════════════════════════════ */
 
+// ── Block type definitions ──
+const BLOCK_TYPES = [
+  { type: 'SCENE_HEADING',  name: 'Scene Heading', color: '#D97706', shortcut: '⌘1' },
+  { type: 'ACTION',         name: 'Action',        color: '#78716C', shortcut: '⌘2' },
+  { type: 'CHARACTER',      name: 'Character',     color: '#0F6E56', shortcut: '⌘3' },
+  { type: 'PARENTHETICAL',  name: 'Parenthetical', color: '#7C3AED', shortcut: '⌘4' },
+  { type: 'DIALOGUE',       name: 'Dialogue',      color: '#0369A1', shortcut: '⌘5' },
+  { type: 'TRANSITION',     name: 'Transition',    color: '#C2410C', shortcut: '⌘6' },
+];
+
+// ── Font options ──
+const FONT_OPTIONS = [
+  { name: 'Courier Prime',  value: "'Courier Prime', monospace" },
+  { name: 'Courier New',    value: "'Courier New', monospace" },
+  { name: 'Special Elite',  value: "'Special Elite', cursive" },
+  { name: 'Cutive Mono',    value: "'Cutive Mono', monospace" },
+  { name: 'IBM Plex Mono',  value: "'IBM Plex Mono', monospace" },
+  { name: 'Source Code Pro', value: "'Source Code Pro', monospace" },
+];
+
+// ── Helper: generate unique IDs ──
+let blockIdCounter = 100;
+const newId = () => `block-${++blockIdCounter}`;
+
+// ── Sample content ──
+const SAMPLE_BLOCKS = [
+  { id: newId(), type: 'SCENE_HEADING',  text: 'INT. COFFEE SHOP - DAY' },
+  { id: newId(), type: 'ACTION',         text: 'A rain-soaked detective pushes through the door. His coat drips onto the linoleum floor. Nobody looks up.' },
+  { id: newId(), type: 'CHARACTER',      text: 'MARLOWE' },
+  { id: newId(), type: 'DIALOGUE',       text: 'Two sugars. And whatever passes for hope around here.' },
+  { id: newId(), type: 'ACTION',         text: "The BARISTA doesn't smile. She's seen his type before." },
+  { id: newId(), type: 'CHARACTER',      text: 'BARISTA' },
+  { id: newId(), type: 'DIALOGUE',       text: "Hope's extra." },
+  { id: newId(), type: 'TRANSITION',     text: 'CUT TO:' },
+  { id: newId(), type: 'SCENE_HEADING',  text: 'EXT. RAIN-SLICKED ALLEY - NIGHT' },
+  { id: newId(), type: 'ACTION',         text: 'Shadows swallow the mouth of the alley. A single streetlamp flickers, unsure of itself.' },
+];
+
+// ── Helper: get display label for block type ──
+const getBlockLabel = (type) => {
+  const found = BLOCK_TYPES.find(b => b.type === type);
+  return found ? found.name.toUpperCase() : type;
+};
+
+// ── Helper: count words ──
+const countWords = (blocks) => {
+  const allText = blocks.map(b => b.text).join(' ');
+  const trimmed = allText.trim();
+  if (!trimmed) return 0;
+  return trimmed.split(/\s+/).length;
+};
+
+// ── Helper: count scenes ──
+const countScenes = (blocks) => {
+  return blocks.filter(b => b.type === 'SCENE_HEADING').length;
+};
+
+// ── Helper: get scenes list ──
+const getScenes = (blocks) => {
+  let sceneNum = 0;
+  return blocks
+    .filter(b => b.type === 'SCENE_HEADING')
+    .map(b => {
+      sceneNum++;
+      return { id: b.id, number: sceneNum, text: b.text };
+    });
+};
+
+// ═══════════════════════════════════════════════
+// BLOCK COMPONENT — single contentEditable block
+// ═══════════════════════════════════════════════
+const Block = React.memo(({ block, isActive, onFocus, onInput, onKeyDown }) => {
+  const ref = useRef(null);
+
+  // Sync text content when block text changes externally
+  useEffect(() => {
+    if (ref.current && ref.current.textContent !== block.text) {
+      ref.current.textContent = block.text;
+    }
+  }, [block.text]);
+
+  const handleInput = useCallback(() => {
+    if (ref.current) {
+      onInput(block.id, ref.current.textContent);
+    }
+  }, [block.id, onInput]);
+
+  const handleKeyDown = useCallback((e) => {
+    onKeyDown(e, block.id);
+  }, [block.id, onKeyDown]);
+
+  const handleFocus = useCallback(() => {
+    onFocus(block.id);
+  }, [block.id, onFocus]);
+
+  const blockClass = `block block-${block.type.toLowerCase().replace('_', '-')}${isActive ? ' block-active' : ''}`;
+
+  return (
+    <div className="block-wrapper">
+      {/* Gutter label — only visible on active block */}
+      {isActive && (
+        <span className="gutter-label">{getBlockLabel(block.type)}</span>
+      )}
+      <div
+        ref={ref}
+        className={blockClass}
+        contentEditable
+        suppressContentEditableWarning
+        spellCheck={true}
+        onFocus={handleFocus}
+        onInput={handleInput}
+        onKeyDown={handleKeyDown}
+        data-block-id={block.id}
+        data-block-type={block.type}
+      />
+    </div>
+  );
+});
+
+// ═══════════════════════════════════════
+// MAIN EDITOR COMPONENT
+// ═══════════════════════════════════════
 const ScreenplayEditor = () => {
   const [title, setTitle] = useState('');
   const [darkMode, setDarkMode] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
+  const [blocks, setBlocks] = useState(SAMPLE_BLOCKS);
+  const [activeBlockId, setActiveBlockId] = useState(null);
+  const [saved, setSaved] = useState(false);
+  const [selectedFont, setSelectedFont] = useState(FONT_OPTIONS[0].value);
+
+  const saveTimerRef = useRef(null);
+  const editorRef = useRef(null);
+
+  // ── Derived data ──
+  const wordCount = countWords(blocks);
+  const sceneCount = countScenes(blocks);
+  const scenes = getScenes(blocks);
+
+  // ── Find which scene the active block belongs to ──
+  const getActiveSceneId = useCallback(() => {
+    if (!activeBlockId) return null;
+    const idx = blocks.findIndex(b => b.id === activeBlockId);
+    for (let i = idx; i >= 0; i--) {
+      if (blocks[i].type === 'SCENE_HEADING') return blocks[i].id;
+    }
+    return null;
+  }, [activeBlockId, blocks]);
+
+  const activeSceneId = getActiveSceneId();
+
+  // ── Auto-save indicator ──
+  const triggerSave = useCallback(() => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    setSaved(false);
+    saveTimerRef.current = setTimeout(() => {
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    }, 300);
+  }, []);
+
+  // ── Focus a block by ID ──
+  const focusBlock = useCallback((blockId) => {
+    requestAnimationFrame(() => {
+      const el = editorRef.current?.querySelector(`[data-block-id="${blockId}"]`);
+      if (el) {
+        el.focus();
+        // Place cursor at end
+        const range = document.createRange();
+        const sel = window.getSelection();
+        if (el.childNodes.length > 0) {
+          range.selectNodeContents(el);
+          range.collapse(false);
+        } else {
+          range.setStart(el, 0);
+          range.collapse(true);
+        }
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    });
+  }, []);
+
+  // ── Handle block text input ──
+  const handleBlockInput = useCallback((blockId, newText) => {
+    setBlocks(prev => prev.map(b =>
+      b.id === blockId ? { ...b, text: newText } : b
+    ));
+    triggerSave();
+  }, [triggerSave]);
+
+  // ── Handle block focus ──
+  const handleBlockFocus = useCallback((blockId) => {
+    setActiveBlockId(blockId);
+  }, []);
+
+  // ── Handle key events on blocks ──
+  const handleBlockKeyDown = useCallback((e, blockId) => {
+    const blockIndex = blocks.findIndex(b => b.id === blockId);
+    const currentBlock = blocks[blockIndex];
+
+    // ENTER — create new block below
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      const id = newId();
+      const newBlock = { id, type: 'ACTION', text: '' };
+
+      setBlocks(prev => {
+        const updated = [...prev];
+        updated.splice(blockIndex + 1, 0, newBlock);
+        return updated;
+      });
+
+      setTimeout(() => focusBlock(id), 0);
+      triggerSave();
+      return;
+    }
+
+    // BACKSPACE on empty block — delete and focus previous
+    if (e.key === 'Backspace' && currentBlock.text === '' && blocks.length > 1) {
+      e.preventDefault();
+      const prevId = blockIndex > 0 ? blocks[blockIndex - 1].id : null;
+
+      setBlocks(prev => prev.filter(b => b.id !== blockId));
+
+      if (prevId) {
+        setTimeout(() => focusBlock(prevId), 0);
+      }
+      triggerSave();
+      return;
+    }
+
+    // ARROW DOWN at end of block — move to next block
+    if (e.key === 'ArrowDown') {
+      const sel = window.getSelection();
+      const el = e.target;
+      if (sel.rangeCount > 0) {
+        const range = sel.getRangeAt(0);
+        if (range.collapsed && range.endOffset === (el.textContent || '').length) {
+          if (blockIndex < blocks.length - 1) {
+            e.preventDefault();
+            focusBlock(blocks[blockIndex + 1].id);
+          }
+        }
+      }
+    }
+
+    // ARROW UP at start of block — move to previous block
+    if (e.key === 'ArrowUp') {
+      const sel = window.getSelection();
+      if (sel.rangeCount > 0) {
+        const range = sel.getRangeAt(0);
+        if (range.collapsed && range.startOffset === 0) {
+          if (blockIndex > 0) {
+            e.preventDefault();
+            focusBlock(blocks[blockIndex - 1].id);
+          }
+        }
+      }
+    }
+  }, [blocks, focusBlock, triggerSave]);
+
+  // ── Change block type (from format buttons) ──
+  const changeBlockType = useCallback((newType) => {
+    if (!activeBlockId) return;
+    setBlocks(prev => prev.map(b =>
+      b.id === activeBlockId ? { ...b, type: newType } : b
+    ));
+    triggerSave();
+    // Re-focus the block
+    setTimeout(() => focusBlock(activeBlockId), 0);
+  }, [activeBlockId, focusBlock, triggerSave]);
+
+  // ── Scroll to a scene ──
+  const scrollToScene = useCallback((sceneBlockId) => {
+    const el = editorRef.current?.querySelector(`[data-block-id="${sceneBlockId}"]`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setActiveBlockId(sceneBlockId);
+      setTimeout(() => focusBlock(sceneBlockId), 300);
+    }
+  }, [focusBlock]);
+
+  // ── Get active block type ──
+  const activeBlock = blocks.find(b => b.id === activeBlockId);
+  const activeBlockType = activeBlock?.type || null;
 
   return (
     <>
       {/* ── ALL CSS ── */}
       <style>{`
         /* ═══ GOOGLE FONTS ═══ */
-        @import url('https://fonts.googleapis.com/css2?family=Courier+Prime:ital,wght@0,400;0,700;1,400;1,700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Courier+Prime:ital,wght@0,400;0,700;1,400;1,700&family=Special+Elite&family=Cutive+Mono&family=IBM+Plex+Mono:wght@400;700&family=Source+Code+Pro:wght@400;700&display=swap');
 
         /* ═══ RESET ═══ */
         *, *::before, *::after {
@@ -179,10 +461,6 @@ const ScreenplayEditor = () => {
           font-size: 12px;
           color: var(--muted-text);
           white-space: nowrap;
-        }
-
-        .topbar-center.focus-hidden {
-          opacity: 1;
         }
 
         .save-indicator {
@@ -480,7 +758,8 @@ const ScreenplayEditor = () => {
           overflow-y: auto;
           display: flex;
           justify-content: center;
-          padding: 40px 20px 80px;
+          align-items: flex-start;
+          padding: 40px 20px 120px;
           background: var(--desk-bg);
           transition: background 200ms ease;
         }
@@ -488,13 +767,12 @@ const ScreenplayEditor = () => {
         .page-card {
           width: 100%;
           max-width: 640px;
-          min-height: calc(100vh - 128px);
+          min-height: 1056px;
           background: var(--page-bg);
           border: 1px solid var(--page-border);
           box-shadow: 0 4px 48px rgba(0,0,0,0.07), 0 1px 4px rgba(0,0,0,0.04);
           border-radius: 2px;
           padding: 72px 80px;
-          font-family: var(--font-mono);
           font-size: 13px;
           line-height: 1.9;
           color: var(--page-text);
@@ -503,6 +781,16 @@ const ScreenplayEditor = () => {
           transition: background 200ms ease, border-color 200ms ease, 
                       box-shadow 300ms ease, max-width 200ms ease,
                       transform 300ms ease;
+
+          /* ── Infinite page: repeating page-break line every 1056px ── */
+          background-image: repeating-linear-gradient(
+            to bottom,
+            transparent,
+            transparent 1055px,
+            var(--panel-border) 1055px,
+            var(--panel-border) 1056px
+          );
+          background-color: var(--page-bg);
         }
 
         .page-card:hover {
@@ -521,6 +809,154 @@ const ScreenplayEditor = () => {
           box-shadow: 0 8px 60px rgba(0,0,0,0.45), 0 2px 8px rgba(0,0,0,0.3);
         }
 
+        /* ═══ FONT SELECTOR ═══ */
+        .font-selector-section {
+          margin-top: 0;
+        }
+
+        .font-select {
+          width: 100%;
+          padding: 7px 10px;
+          border: 1px solid var(--panel-border);
+          border-radius: 6px;
+          background: var(--card-bg);
+          color: var(--body-text);
+          font-family: var(--font-ui);
+          font-size: 12px;
+          cursor: pointer;
+          outline: none;
+          transition: border-color 150ms ease, box-shadow 150ms ease;
+          appearance: none;
+          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%239C9590'/%3E%3C/svg%3E");
+          background-repeat: no-repeat;
+          background-position: right 10px center;
+          padding-right: 28px;
+        }
+
+        .font-select:hover {
+          border-color: var(--amber);
+        }
+
+        .font-select:focus {
+          border-color: var(--amber);
+          box-shadow: 0 0 0 2px rgba(217, 119, 6, 0.15);
+        }
+
+        .font-preview {
+          margin-top: 6px;
+          padding: 8px 10px;
+          border-radius: 6px;
+          background: var(--active-wash);
+          font-size: 12px;
+          line-height: 1.6;
+          color: var(--body-text);
+        }
+
+        /* ═══ BLOCK STYLES ═══ */
+        .block-wrapper {
+          position: relative;
+        }
+
+        .block {
+          outline: none;
+          border: none;
+          padding: 2px 4px;
+          border-radius: 3px;
+          min-height: 1.9em;
+          transition: background 150ms ease;
+          cursor: text;
+        }
+
+        .block:empty::before {
+          content: attr(data-placeholder);
+          color: var(--gutter-label);
+          pointer-events: none;
+        }
+
+        .block-active {
+          background: var(--active-wash);
+        }
+
+        /* ── Scene Heading ── */
+        .block-scene-heading {
+          text-transform: uppercase;
+          font-weight: 700;
+          border-left: 3px solid var(--amber);
+          padding-left: 10px;
+          margin-top: 24px;
+        }
+
+        .block-wrapper:first-child .block-scene-heading {
+          margin-top: 0;
+        }
+
+        /* ── Action ── */
+        .block-action {
+          margin-top: 12px;
+        }
+
+        .block-wrapper:first-child .block-action {
+          margin-top: 0;
+        }
+
+        /* ── Character ── */
+        .block-character {
+          text-transform: uppercase;
+          margin-left: 40%;
+          margin-top: 16px;
+          color: var(--page-text);
+        }
+
+        /* ── Parenthetical ── */
+        .block-parenthetical {
+          margin-left: 35%;
+          margin-right: 35%;
+          font-style: italic;
+          color: var(--muted-text);
+        }
+
+        .dark-mode .block-parenthetical {
+          color: #8A857E;
+        }
+
+        /* ── Dialogue ── */
+        .block-dialogue {
+          margin-left: 25%;
+          margin-right: 25%;
+          margin-top: 4px;
+          color: var(--page-text);
+        }
+
+        /* ── Transition ── */
+        .block-transition {
+          text-transform: uppercase;
+          text-align: right;
+          color: var(--muted-text);
+          margin-top: 16px;
+        }
+
+        .dark-mode .block-transition {
+          color: #8A857E;
+        }
+
+        /* ── Gutter Label ── */
+        .gutter-label {
+          position: absolute;
+          left: -90px;
+          top: 50%;
+          transform: translateY(-50%);
+          font-family: var(--font-ui);
+          font-size: 9px;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          color: var(--gutter-label);
+          white-space: nowrap;
+          pointer-events: none;
+          user-select: none;
+        }
+
+        /* ═══ PLACEHOLDER (shown when editor is empty) ═══ */
         .page-placeholder {
           position: absolute;
           top: 50%;
@@ -730,8 +1166,8 @@ const ScreenplayEditor = () => {
           </div>
 
           <div className="topbar-center">
-            <span>0 words · 0 scenes</span>
-            <div className="save-indicator">
+            <span>{wordCount} words · {sceneCount} scenes</span>
+            <div className={`save-indicator${saved ? ' visible' : ''}`}>
               <span className="save-dot" />
               <span>Saved</span>
             </div>
@@ -766,18 +1202,12 @@ const ScreenplayEditor = () => {
             {/* FORMAT section */}
             <div>
               <div className="panel-section-label">Format</div>
-              {[
-                { name: 'Scene Heading', color: '#D97706', shortcut: '⌘1' },
-                { name: 'Action',        color: '#78716C', shortcut: '⌘2' },
-                { name: 'Character',     color: '#0F6E56', shortcut: '⌘3' },
-                { name: 'Parenthetical', color: '#7C3AED', shortcut: '⌘4' },
-                { name: 'Dialogue',      color: '#0369A1', shortcut: '⌘5' },
-                { name: 'Transition',    color: '#C2410C', shortcut: '⌘6' },
-              ].map((fmt, i) => (
+              {BLOCK_TYPES.map((fmt) => (
                 <button
-                  key={i}
-                  className={`format-btn${i === 0 ? ' active' : ''}`}
-                  style={{ borderLeftColor: i === 0 ? fmt.color : 'transparent' }}
+                  key={fmt.type}
+                  className={`format-btn${activeBlockType === fmt.type ? ' active' : ''}`}
+                  style={{ borderLeftColor: activeBlockType === fmt.type ? fmt.color : 'transparent' }}
+                  onClick={() => changeBlockType(fmt.type)}
                 >
                   <span className="format-btn-name">
                     <span className="format-dot" style={{ background: fmt.color }} />
@@ -788,29 +1218,78 @@ const ScreenplayEditor = () => {
               ))}
             </div>
 
+            {/* FONT section */}
+            <div className="font-selector-section">
+              <div className="panel-section-label">Font</div>
+              <select
+                className="font-select"
+                value={selectedFont}
+                onChange={(e) => setSelectedFont(e.target.value)}
+              >
+                {FONT_OPTIONS.map((f) => (
+                  <option key={f.name} value={f.value} style={{ fontFamily: f.value }}>
+                    {f.name}
+                  </option>
+                ))}
+              </select>
+              <div className="font-preview" style={{ fontFamily: selectedFont }}>
+                INT. PREVIEW - DAY
+              </div>
+            </div>
+
             {/* JUMP TO section */}
             <div>
               <div className="panel-section-label">Jump To</div>
               <div className="scene-list">
-                <p className="scene-empty">No scenes yet</p>
+                {scenes.length === 0 ? (
+                  <p className="scene-empty">No scenes yet</p>
+                ) : (
+                  scenes.map((scene) => (
+                    <button
+                      key={scene.id}
+                      className={`scene-item${activeSceneId === scene.id ? ' active' : ''}`}
+                      onDoubleClick={() => scrollToScene(scene.id)}
+                      onClick={() => scrollToScene(scene.id)}
+                    >
+                      <span className="scene-number-pill">{scene.number}</span>
+                      <span className="scene-name">{scene.text || 'Untitled Scene'}</span>
+                    </button>
+                  ))
+                )}
               </div>
             </div>
           </aside>
 
           {/* ── WRITING AREA ── */}
           <main className="writing-area">
-            <div className={`page-card${focusMode ? ' focus-expanded' : ''}`}>
-              {/* Placeholder shown when no blocks exist */}
-              <div className="page-placeholder">
-                <div className="page-placeholder-icon">✍️</div>
-                <p className="page-placeholder-text">
-                  Start writing your screenplay.<br />
-                  The page formats automatically as you type.
-                </p>
-                <p className="page-placeholder-hint">
-                  Type <strong>INT.</strong> or <strong>EXT.</strong> to begin a scene
-                </p>
-              </div>
+            <div
+              ref={editorRef}
+              className={`page-card${focusMode ? ' focus-expanded' : ''}`}
+              style={{ fontFamily: selectedFont }}
+            >
+              {blocks.length === 0 ? (
+                <div className="page-placeholder">
+                  <div className="page-placeholder-icon">✍️</div>
+                  <p className="page-placeholder-text">
+                    Start writing your screenplay.<br />
+                    The page formats automatically as you type.
+                  </p>
+                  <p className="page-placeholder-hint">
+                    Type <strong>INT.</strong> or <strong>EXT.</strong> to begin a scene
+                  </p>
+                </div>
+              ) : (
+                blocks.map((block) => (
+                  <Block
+                    key={block.id}
+                    block={block}
+                    isActive={activeBlockId === block.id}
+                    onFocus={handleBlockFocus}
+                    onInput={handleBlockInput}
+                    onKeyDown={handleBlockKeyDown}
+                  />
+                ))
+              )}
             </div>
           </main>
 
@@ -818,24 +1297,44 @@ const ScreenplayEditor = () => {
           <aside className={`right-panel${focusMode ? ' collapsed' : ''}`}>
             <div className="panel-section-label">Scene Notes</div>
 
-            {/* Empty state */}
-            <div className="notes-empty">
-              <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <rect x="14" y="8" width="36" height="48" rx="3" 
-                      stroke="currentColor" strokeWidth="2" fill="none"/>
-                <line x1="22" y1="20" x2="42" y2="20" 
-                      stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                <line x1="22" y1="28" x2="38" y2="28" 
-                      stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                <line x1="22" y1="36" x2="35" y2="36" 
-                      stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                <path d="M44 38L52 30L56 34L48 42H44V38Z" 
-                      stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
-              </svg>
-              <p className="notes-empty-text">
-                Start writing to see<br />your scenes here
-              </p>
-            </div>
+            {scenes.length === 0 ? (
+              <div className="notes-empty">
+                <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <rect x="14" y="8" width="36" height="48" rx="3" 
+                        stroke="currentColor" strokeWidth="2" fill="none"/>
+                  <line x1="22" y1="20" x2="42" y2="20" 
+                        stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                  <line x1="22" y1="28" x2="38" y2="28" 
+                        stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                  <line x1="22" y1="36" x2="35" y2="36" 
+                        stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                  <path d="M44 38L52 30L56 34L48 42H44V38Z" 
+                        stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
+                </svg>
+                <p className="notes-empty-text">
+                  Start writing to see<br />your scenes here
+                </p>
+              </div>
+            ) : (
+              scenes.map((scene) => (
+                <div
+                  key={scene.id}
+                  className={`note-card${activeSceneId === scene.id ? ' active' : ''}`}
+                  onClick={() => scrollToScene(scene.id)}
+                >
+                  <div className="note-card-header">
+                    <span className="note-card-badge">S{scene.number}</span>
+                    <span className="note-card-scene-name">{scene.text}</span>
+                  </div>
+                  <textarea
+                    className="note-card-textarea"
+                    placeholder="Notes for this scene..."
+                    onClick={(e) => e.stopPropagation()}
+                    rows={2}
+                  />
+                </div>
+              ))
+            )}
           </aside>
 
         </div>
