@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 
 /* ═══════════════════════════════════════════════════════════════
    SCREENPLAY EDITOR — Part 1 + Part 2
@@ -26,8 +26,41 @@ const FONT_OPTIONS = [
 ];
 
 // ── Helper: generate unique IDs ──
-let blockIdCounter = 100;
-const newId = () => `block-${++blockIdCounter}`;
+// Uses random IDs to avoid collisions after page reload/auto-save restore
+const newId = () => `b-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+
+// ── Helper: ensure all block IDs are unique and sync sceneNotes keys ──
+const ensureUniqueIds = (blocks, sceneNotes = {}) => {
+  const seenIds = new Set();
+  const idMap = {};
+  let changed = false;
+
+  const updatedBlocks = blocks.map(b => {
+    if (!b.id || seenIds.has(b.id)) {
+      const newBlockId = newId();
+      idMap[b.id] = newBlockId;
+      seenIds.add(newBlockId);
+      changed = true;
+      return { ...b, id: newBlockId };
+    } else {
+      seenIds.add(b.id);
+      return b;
+    }
+  });
+
+  if (changed) {
+    const updatedNotes = { ...sceneNotes };
+    Object.keys(idMap).forEach(oldId => {
+      if (sceneNotes[oldId] !== undefined) {
+        updatedNotes[idMap[oldId]] = sceneNotes[oldId];
+        delete updatedNotes[oldId];
+      }
+    });
+    return { blocks: updatedBlocks, sceneNotes: updatedNotes };
+  }
+
+  return { blocks, sceneNotes };
+};
 
 // ── Sample content ──
 const SAMPLE_BLOCKS = [
@@ -78,16 +111,26 @@ const getScenes = (blocks) => {
 // ═══════════════════════════════════════════════
 const Block = React.memo(({ block, isActive, onFocus, onInput, onKeyDown }) => {
   const ref = useRef(null);
+  const localTextRef = useRef(block.text);
 
-  // Sync text content when block text changes externally
+  // On mount, set initial content
   useEffect(() => {
-    if (ref.current && ref.current.textContent !== block.text) {
+    if (ref.current) {
+      ref.current.textContent = block.text;
+    }
+  }, []);
+
+  // Sync text content only when block text changes externally
+  useEffect(() => {
+    if (ref.current && block.text !== localTextRef.current) {
+      localTextRef.current = block.text;
       ref.current.textContent = block.text;
     }
   }, [block.text]);
 
   const handleInput = useCallback(() => {
     if (ref.current) {
+      localTextRef.current = ref.current.textContent;
       onInput(block.id, ref.current.textContent);
     }
   }, [block.id, onInput]);
@@ -127,18 +170,57 @@ const Block = React.memo(({ block, isActive, onFocus, onInput, onKeyDown }) => {
 // ═══════════════════════════════════════
 // MAIN EDITOR COMPONENT
 // ═══════════════════════════════════════
+const AUTO_SAVE_KEY = 'fadein-autosave';
+const HISTORY_KEY = 'fadein-history';
+const HISTORY_MAX = 20;
+
+// ── Load auto-saved data from localStorage ──
+const loadAutoSave = () => {
+  try {
+    const raw = localStorage.getItem(AUTO_SAVE_KEY);
+    if (raw) {
+      const data = JSON.parse(raw);
+      // Ensure all loaded blocks have unique IDs and update sceneNotes accordingly
+      if (data.blocks && Array.isArray(data.blocks)) {
+        const sanitized = ensureUniqueIds(data.blocks, data.sceneNotes || {});
+        data.blocks = sanitized.blocks;
+        data.sceneNotes = sanitized.sceneNotes;
+      }
+      return data;
+    }
+  } catch (e) { /* ignore */ }
+  return null;
+};
+
+// ── Load project history from localStorage ──
+const loadHistory = () => {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (e) { /* ignore */ }
+  return [];
+};
+
 const ScreenplayEditor = () => {
-  const [title, setTitle] = useState('');
+  // ── Restore from auto-save or use defaults ──
+  const autoSaved = useMemo(() => loadAutoSave(), []);
+
+  const [title, setTitle] = useState(autoSaved?.title || '');
   const [darkMode, setDarkMode] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
-  const [blocks, setBlocks] = useState(SAMPLE_BLOCKS);
+  const [blocks, setBlocks] = useState(autoSaved?.blocks || SAMPLE_BLOCKS);
   const [activeBlockId, setActiveBlockId] = useState(null);
   const [saved, setSaved] = useState(false);
-  const [selectedFont, setSelectedFont] = useState(FONT_OPTIONS[0].value);
+  const [selectedFont, setSelectedFont] = useState(autoSaved?.font || FONT_OPTIONS[0].value);
   const [showExportMenu, setShowExportMenu] = useState(false);
-  const [sceneNotes, setSceneNotes] = useState({});
+  const [sceneNotes, setSceneNotes] = useState(autoSaved?.sceneNotes || {});
+
+  // ── Project history ──
+  const [projectHistory, setProjectHistory] = useState(() => loadHistory());
+  const [showHistoryMenu, setShowHistoryMenu] = useState(false);
 
   const saveTimerRef = useRef(null);
+  const autoSaveTimerRef = useRef(null);
   const editorRef = useRef(null);
   const fileInputRef = useRef(null);
 
@@ -158,6 +240,79 @@ const ScreenplayEditor = () => {
   }, [activeBlockId, blocks]);
 
   const activeSceneId = getActiveSceneId();
+
+  // ── Sync document.title ──
+  useEffect(() => {
+    document.title = title ? `${title} - Screenplay` : 'Untitled Screenplay';
+  }, [title]);
+
+  // ── Auto-save to localStorage ──
+  const autoSaveToStorage = useCallback(() => {
+    try {
+      const data = { title, font: selectedFont, blocks, sceneNotes, savedAt: new Date().toISOString() };
+      localStorage.setItem(AUTO_SAVE_KEY, JSON.stringify(data));
+    } catch (e) { /* storage full, ignore */ }
+  }, [title, selectedFont, blocks, sceneNotes]);
+
+  useEffect(() => {
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => autoSaveToStorage(), 2000);
+    return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
+  }, [autoSaveToStorage]);
+
+  // Also save on beforeunload (tab close / crash)
+  useEffect(() => {
+    const onBeforeUnload = () => autoSaveToStorage();
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [autoSaveToStorage]);
+
+  // ── Save a snapshot to project history ──
+  const saveHistorySnapshot = useCallback(() => {
+    const snap = {
+      id: Date.now(),
+      title: title || 'Untitled',
+      savedAt: new Date().toISOString(),
+      wordCount: countWords(blocks),
+      sceneCount: countScenes(blocks),
+      blocks, sceneNotes, font: selectedFont,
+    };
+    setProjectHistory(prev => {
+      const updated = [snap, ...prev].slice(0, HISTORY_MAX);
+      try { localStorage.setItem(HISTORY_KEY, JSON.stringify(updated)); } catch(e) {}
+      return updated;
+    });
+  }, [title, blocks, sceneNotes, selectedFont]);
+
+  // Auto-snapshot every 5 minutes
+  useEffect(() => {
+    const interval = setInterval(() => saveHistorySnapshot(), 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [saveHistorySnapshot]);
+
+  // ── Restore a history version ──
+  const restoreHistory = useCallback((snap) => {
+    if (!window.confirm(`Restore version from ${new Date(snap.savedAt).toLocaleString()}? Current work will be auto-saved first.`)) return;
+    autoSaveToStorage();
+    saveHistorySnapshot();
+    const sanitized = ensureUniqueIds(snap.blocks, snap.sceneNotes || {});
+    setBlocks(sanitized.blocks);
+    setTitle(snap.title);
+    setSceneNotes(sanitized.sceneNotes);
+    if (snap.font) setSelectedFont(snap.font);
+    setActiveBlockId(null);
+    setShowHistoryMenu(false);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  }, [autoSaveToStorage, saveHistorySnapshot]);
+
+  // ── Clear history ──
+  const clearHistory = useCallback(() => {
+    if (!window.confirm('Clear all project history?')) return;
+    setProjectHistory([]);
+    try { localStorage.removeItem(HISTORY_KEY); } catch(e) {}
+    setShowHistoryMenu(false);
+  }, []);
 
   // ── Auto-save indicator ──
   const triggerSave = useCallback(() => {
@@ -193,9 +348,7 @@ const ScreenplayEditor = () => {
 
   // ── Handle block text input ──
   const handleBlockInput = useCallback((blockId, newText) => {
-    setBlocks(prev => prev.map(b =>
-      b.id === blockId ? { ...b, text: newText } : b
-    ));
+    setBlocks(prev => prev.map(b => b.id === blockId ? { ...b, text: newText } : b));
     triggerSave();
   }, [triggerSave]);
 
@@ -227,7 +380,10 @@ const ScreenplayEditor = () => {
     }
 
     // BACKSPACE on empty block — delete and focus previous
-    if (e.key === 'Backspace' && currentBlock.text === '' && blocks.length > 1) {
+    // Check actual DOM content (e.target.textContent) instead of React state
+    // to avoid stale closure issues where state hasn't caught up with the DOM
+    const actualText = e.target.textContent || '';
+    if (e.key === 'Backspace' && actualText.trim() === '' && blocks.length > 1) {
       e.preventDefault();
       const prevId = blockIndex > 0 ? blocks[blockIndex - 1].id : null;
 
@@ -270,12 +426,24 @@ const ScreenplayEditor = () => {
     }
   }, [blocks, focusBlock, triggerSave]);
 
+  // ── New File ──
+  const handleNewFile = useCallback(() => {
+    if (!window.confirm('Start a new screenplay? Any unsaved changes will be lost.')) return;
+    saveHistorySnapshot(); // save current work to history first
+    const firstBlock = { id: newId(), type: 'ACTION', text: '' };
+    setBlocks([firstBlock]);
+    setTitle('');
+    setSceneNotes({});
+    setActiveBlockId(firstBlock.id);
+    autoSaveToStorage();
+    setTimeout(() => focusBlock(firstBlock.id), 0);
+  }, [saveHistorySnapshot, focusBlock, autoSaveToStorage]);
+
   // ── Change block type (from format buttons) ──
+
   const changeBlockType = useCallback((newType) => {
     if (!activeBlockId) return;
-    setBlocks(prev => prev.map(b =>
-      b.id === activeBlockId ? { ...b, type: newType } : b
-    ));
+    setBlocks(prev => prev.map(b => b.id === activeBlockId ? { ...b, type: newType } : b));
     triggerSave();
     // Re-focus the block
     setTimeout(() => focusBlock(activeBlockId), 0);
@@ -318,6 +486,12 @@ const ScreenplayEditor = () => {
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   }, [title, selectedFont, blocks, sceneNotes]);
+
+  // ── Export as PDF (Print) ──
+  const handleExportPdf = useCallback(() => {
+    setShowExportMenu(false);
+    window.print();
+  }, []);
 
   // ── Export as Fountain (.fountain) ──
   const handleExportFountain = useCallback(() => {
@@ -400,10 +574,11 @@ const ScreenplayEditor = () => {
         if (ext === 'json') {
           const data = JSON.parse(text);
           if (data.blocks && Array.isArray(data.blocks)) {
-            setBlocks(data.blocks);
+            const sanitized = ensureUniqueIds(data.blocks, data.sceneNotes || {});
+            setBlocks(sanitized.blocks);
+            setSceneNotes(sanitized.sceneNotes);
             if (data.title) setTitle(data.title);
             if (data.font) setSelectedFont(data.font);
-            if (data.sceneNotes) setSceneNotes(data.sceneNotes);
           }
         } else if (ext === 'fountain') {
           // Basic Fountain parser
@@ -552,6 +727,7 @@ const ScreenplayEditor = () => {
           display: flex;
           align-items: center;
           justify-content: space-between;
+          position: relative;
           z-index: 100;
           transition: background 200ms ease, border-color 200ms ease;
         }
@@ -696,7 +872,7 @@ const ScreenplayEditor = () => {
         }
 
         .topbar-btn:active {
-          transform: translateY(0px) scale(0.97);
+          transform: translateY(0px);
         }
 
 
@@ -769,7 +945,7 @@ const ScreenplayEditor = () => {
         }
 
         .format-btn:active {
-          transform: scale(0.98);
+          transform: translateY(0);
         }
 
         .dark-mode .format-btn:hover {
@@ -849,7 +1025,7 @@ const ScreenplayEditor = () => {
         }
 
         .scene-item:active {
-          transform: scale(0.98);
+          transform: translateY(0);
         }
 
         .dark-mode .scene-item:hover {
@@ -1264,6 +1440,197 @@ const ScreenplayEditor = () => {
           line-height: 1.6;
         }
 
+        /* ═══ NEW FILE + HISTORY BUTTONS ═══ */
+        .topbar-btn-new {
+          background: none;
+          border: 1px solid var(--panel-border);
+          cursor: pointer;
+          font-family: var(--font-ui);
+          font-size: 12px;
+          font-weight: 500;
+          color: var(--body-text);
+          padding: 6px 10px;
+          border-radius: 8px;
+          display: flex;
+          align-items: center;
+          gap: 5px;
+          transition: background 150ms ease, color 150ms ease,
+                      transform 150ms ease, border-color 150ms ease;
+        }
+
+        .topbar-btn-new:hover {
+          background: var(--active-wash);
+          color: var(--heading-text);
+          border-color: var(--amber);
+          transform: translateY(-1px);
+        }
+
+        .topbar-btn-new:active {
+          transform: translateY(0);
+        }
+
+        /* ═══ HISTORY DROPDOWN ═══ */
+        .history-dropdown-wrapper {
+          position: relative;
+        }
+
+        .topbar-btn-history-toggle {
+          background: none;
+          border: 1px solid var(--panel-border);
+          cursor: pointer;
+          font-family: var(--font-ui);
+          font-size: 12px;
+          font-weight: 500;
+          color: var(--body-text);
+          padding: 6px 10px;
+          border-radius: 8px;
+          display: flex;
+          align-items: center;
+          gap: 5px;
+          transition: background 150ms ease, color 150ms ease,
+                      transform 150ms ease, border-color 150ms ease;
+        }
+
+        .topbar-btn-history-toggle:hover {
+          background: var(--active-wash);
+          color: var(--heading-text);
+          border-color: var(--amber);
+          transform: translateY(-1px);
+        }
+
+        .topbar-btn-history-toggle:active {
+          transform: translateY(0);
+        }
+
+        .history-dropdown {
+          position: absolute;
+          top: calc(100% + 8px);
+          right: 0;
+          width: 300px;
+          max-height: 400px;
+          overflow-y: auto;
+          background: #FFFFFF;
+          border: 1px solid #EDE9E3;
+          border-radius: 12px;
+          padding: 8px;
+          box-shadow: 0 12px 40px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.06);
+          z-index: 500;
+          opacity: 0;
+          transform: translateY(-4px);
+          animation: dropdown-in 120ms ease forwards;
+        }
+
+        .history-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 6px 8px 10px;
+          border-bottom: 1px solid #EDE9E3;
+          margin-bottom: 6px;
+        }
+
+        .history-title {
+          font-family: var(--font-ui);
+          font-size: 11px;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.8px;
+          color: var(--muted-text);
+        }
+
+        .history-clear-btn {
+          background: none;
+          border: none;
+          cursor: pointer;
+          font-family: var(--font-ui);
+          font-size: 10px;
+          color: var(--muted-text);
+          padding: 3px 8px;
+          border-radius: 4px;
+          transition: background 100ms ease, color 100ms ease;
+        }
+
+        .history-clear-btn:hover {
+          background: #FEE2E2;
+          color: #DC2626;
+        }
+
+        .history-item {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          width: 100%;
+          padding: 10px 10px;
+          border: none;
+          background: transparent;
+          cursor: pointer;
+          border-radius: 8px;
+          transition: background 100ms ease, padding-left 100ms ease;
+          text-align: left;
+          border-left: 3px solid transparent;
+        }
+
+        .history-item:hover {
+          background: #FEF9EE;
+          padding-left: 13px;
+          border-left-color: var(--amber);
+        }
+
+        .history-item:active {
+          transform: translateY(0);
+        }
+
+        .history-item-top {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+
+        .history-item-title {
+          font-family: var(--font-ui);
+          font-size: 12px;
+          font-weight: 600;
+          color: #3D3833;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          max-width: 170px;
+        }
+
+        .history-item-time {
+          font-family: var(--font-mono);
+          font-size: 9px;
+          color: var(--muted-text);
+          white-space: nowrap;
+        }
+
+        .history-item-stats {
+          font-family: var(--font-ui);
+          font-size: 10px;
+          color: var(--muted-text);
+        }
+
+        .history-empty {
+          padding: 24px 12px;
+          text-align: center;
+          font-family: var(--font-ui);
+          font-size: 12px;
+          color: var(--muted-text);
+          font-style: italic;
+        }
+
+        .history-badge {
+          display: inline-block;
+          font-family: var(--font-mono);
+          font-size: 8px;
+          font-weight: 700;
+          color: var(--amber);
+          background: #FEF3E2;
+          padding: 1px 5px;
+          border-radius: 3px;
+          margin-left: 6px;
+        }
+
         /* ═══ SAVE / IMPORT / EXPORT BUTTONS ═══ */
         .topbar-action-btn {
           background: #2D2A26;
@@ -1287,7 +1654,7 @@ const ScreenplayEditor = () => {
         }
 
         .topbar-action-btn:active {
-          transform: translateY(0px) scale(0.97);
+          transform: translateY(0px);
         }
 
         .topbar-action-btn.btn-save {
@@ -1388,7 +1755,7 @@ const ScreenplayEditor = () => {
         }
 
         .export-dropdown-item:active {
-          transform: scale(0.98);
+          transform: translateY(0);
         }
 
         .export-item-icon {
@@ -1441,6 +1808,64 @@ const ScreenplayEditor = () => {
         .right-panel::-webkit-scrollbar-thumb:hover {
           background: var(--muted-text);
         }
+
+        /* ═══ PRINT STYLING ═══ */
+        @media print {
+          @page {
+            size: letter;
+            margin: 1in;
+          }
+
+          /* Hide UI elements */
+          .topbar,
+          .left-panel,
+          .right-panel,
+          .gutter-label,
+          .page-placeholder {
+            display: none !important;
+          }
+
+          /* Reset layouts for print */
+          body, .app-shell, .body-layout, .writing-area {
+            background: #ffffff !important;
+            color: #000000 !important;
+            height: auto !important;
+            min-height: 0 !important;
+            overflow: visible !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            display: block !important;
+            box-shadow: none !important;
+          }
+
+          .page-card {
+            border: none !important;
+            box-shadow: none !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            min-height: 0 !important;
+            background: none !important;
+            background-color: #ffffff !important;
+            color: #000000 !important;
+          }
+
+          .block-wrapper {
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+          }
+
+          .block-scene-heading {
+            page-break-after: avoid !important;
+            break-after: avoid !important;
+          }
+
+          .block {
+            background: none !important;
+            color: #000000 !important;
+          }
+        }
       `}</style>
 
       {/* ── APP SHELL ── */}
@@ -1468,11 +1893,62 @@ const ScreenplayEditor = () => {
             <span>{wordCount} words · {sceneCount} scenes</span>
             <div className={`save-indicator${saved ? ' visible' : ''}`}>
               <span className="save-dot" />
-              <span>Saved</span>
+              <span>Auto-saved</span>
             </div>
           </div>
 
           <div className="topbar-right">
+            <button
+              className="topbar-btn-new"
+              onClick={handleNewFile}
+              title="New Screenplay"
+            >
+              ✚ New
+            </button>
+            <div className="history-dropdown-wrapper">
+              <button
+                className="topbar-btn-history-toggle"
+                onClick={() => { saveHistorySnapshot(); setShowHistoryMenu(!showHistoryMenu); }}
+                title="Project History"
+              >
+                📜 History
+              </button>
+              {showHistoryMenu && (
+                <div className="history-dropdown">
+                  <div className="history-header">
+                    <span className="history-title">Project History</span>
+                    {projectHistory.length > 0 && (
+                      <button className="history-clear-btn" onClick={clearHistory}>Clear All</button>
+                    )}
+                  </div>
+                  {projectHistory.length === 0 ? (
+                    <div className="history-empty">No versions saved yet</div>
+                  ) : (
+                    projectHistory.map((snap, i) => (
+                      <button
+                        key={snap.id}
+                        className="history-item"
+                        onClick={() => restoreHistory(snap)}
+                      >
+                        <div className="history-item-top">
+                          <span className="history-item-title">
+                            {snap.title || 'Untitled'}
+                            {i === 0 && <span className="history-badge">LATEST</span>}
+                          </span>
+                          <span className="history-item-time">
+                            {new Date(snap.savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                        <span className="history-item-stats">
+                          {snap.wordCount || 0} words · {snap.sceneCount || 0} scenes · {new Date(snap.savedAt).toLocaleDateString()}
+                        </span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="topbar-separator-sm" />
             <button
               className="topbar-action-btn btn-save"
               onClick={handleSaveProject}
@@ -1522,7 +1998,7 @@ const ScreenplayEditor = () => {
               </button>
               {showExportMenu && (
                 <div className="export-dropdown">
-                  <button className="export-dropdown-item" onClick={() => { setShowExportMenu(false); /* PDF later */ }}>
+                  <button className="export-dropdown-item" onClick={handleExportPdf}>
                     <span className="export-item-icon">📄</span>
                     <span className="export-item-label">PDF Document</span>
                     <span className="export-item-ext">.pdf</span>
