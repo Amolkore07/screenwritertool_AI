@@ -29,6 +29,76 @@ const FONT_OPTIONS = [
 // Uses random IDs to avoid collisions after page reload/auto-save restore
 const newId = () => `b-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 
+// ── Temporary Storyboard Feature ──
+const TemporaryStoryboard = ({ scenes }) => {
+  const [data, setData] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('temp_storyboard')) || {}; } catch(e) { return {}; }
+  });
+
+  useEffect(() => {
+    localStorage.setItem('temp_storyboard', JSON.stringify(data));
+  }, [data]);
+
+  const handleExport = () => {
+    let csv = "Scene Number,Scene Heading,Camera Angles / Storyboard\n";
+    scenes.forEach(scene => {
+      const text = data[scene.id] || '';
+      const heading = (scene.text || '').replace(/"/g, '""');
+      const angles = text.replace(/"/g, '""');
+      csv += `"${scene.number}","${heading}","${angles}"\n`;
+    });
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'storyboard.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  if (scenes.length === 0) return null;
+
+  return (
+    <div className="storyboard-panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflowY: 'auto', padding: '16px 12px', borderTop: '1px solid var(--panel-border)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+        <div className="panel-section-label" style={{ margin: 0, padding: 0 }}>Storyboard (Test)</div>
+        <button 
+          onClick={handleExport}
+          style={{
+            background: 'var(--amber)', color: '#fff', border: 'none', 
+            padding: '4px 8px', borderRadius: '4px', fontSize: '10px', 
+            cursor: 'pointer', fontWeight: 'bold'
+          }}
+        >
+          Export CSV
+        </button>
+      </div>
+      {scenes.map(scene => (
+        <div key={scene.id} style={{ marginBottom: '10px', background: 'var(--card-bg)', padding: '10px', borderRadius: '8px', border: '1px solid var(--card-border)' }}>
+          <div style={{ fontSize: '11px', fontWeight: '600', marginBottom: '6px', color: 'var(--heading-text)' }}>
+            Scene {scene.number}
+          </div>
+          <textarea
+            style={{ 
+              width: '100%', fontSize: '11px', padding: '6px', 
+              borderRadius: '6px', border: '1px solid var(--panel-border)',
+              background: 'transparent', color: 'var(--body-text)',
+              fontFamily: 'var(--font-ui)', resize: 'vertical'
+            }}
+            rows={2}
+            placeholder="Camera angles, shots, movement..."
+            value={data[scene.id] || ''}
+            onChange={(e) => setData(prev => ({ ...prev, [scene.id]: e.target.value }))}
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      ))}
+    </div>
+  );
+};
+
 // ── Helper: ensure all block IDs are unique and sync sceneNotes keys ──
 const ensureUniqueIds = (blocks, sceneNotes = {}) => {
   const seenIds = new Set();
@@ -1316,11 +1386,11 @@ const ScreenplayEditor = () => {
           min-width: 260px;
           background: var(--panel-bg);
           border-left: 1px solid var(--panel-border);
-          padding: 16px 12px;
-          overflow-y: auto;
+          padding: 0;
+          overflow-y: hidden;
           display: flex;
           flex-direction: column;
-          gap: 12px;
+          gap: 0;
           transition: width 200ms ease, min-width 200ms ease,
                       opacity 200ms ease, padding 200ms ease,
                       background 200ms ease, border-color 200ms ease;
@@ -2121,48 +2191,52 @@ const ScreenplayEditor = () => {
 
           {/* ── RIGHT PANEL ── */}
           <aside className={`right-panel${focusMode ? ' collapsed' : ''}`}>
-            <div className="panel-section-label">Scene Notes</div>
+            <div className="notes-container" style={{ flex: 1, overflowY: 'auto', padding: '16px 12px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div className="panel-section-label">Scene Notes</div>
 
-            {scenes.length === 0 ? (
-              <div className="notes-empty">
-                <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <rect x="14" y="8" width="36" height="48" rx="3" 
-                        stroke="currentColor" strokeWidth="2" fill="none"/>
-                  <line x1="22" y1="20" x2="42" y2="20" 
-                        stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                  <line x1="22" y1="28" x2="38" y2="28" 
-                        stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                  <line x1="22" y1="36" x2="35" y2="36" 
-                        stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                  <path d="M44 38L52 30L56 34L48 42H44V38Z" 
-                        stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
-                </svg>
-                <p className="notes-empty-text">
-                  Start writing to see<br />your scenes here
-                </p>
-              </div>
-            ) : (
-              scenes.map((scene) => (
-                <div
-                  key={scene.id}
-                  className={`note-card${activeSceneId === scene.id ? ' active' : ''}`}
-                  onClick={() => scrollToScene(scene.id)}
-                >
-                  <div className="note-card-header">
-                    <span className="note-card-badge">S{scene.number}</span>
-                    <span className="note-card-scene-name">{scene.text}</span>
-                  </div>
-                  <textarea
-                    className="note-card-textarea"
-                    placeholder="Notes for this scene..."
-                    value={sceneNotes[scene.id] || ''}
-                    onChange={(e) => setSceneNotes(prev => ({ ...prev, [scene.id]: e.target.value }))}
-                    onClick={(e) => e.stopPropagation()}
-                    rows={2}
-                  />
+              {scenes.length === 0 ? (
+                <div className="notes-empty">
+                  <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect x="14" y="8" width="36" height="48" rx="3" 
+                          stroke="currentColor" strokeWidth="2" fill="none"/>
+                    <line x1="22" y1="20" x2="42" y2="20" 
+                          stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                    <line x1="22" y1="28" x2="38" y2="28" 
+                          stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                    <line x1="22" y1="36" x2="35" y2="36" 
+                          stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                    <path d="M44 38L52 30L56 34L48 42H44V38Z" 
+                          stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
+                  </svg>
+                  <p className="notes-empty-text">
+                    Start writing to see<br />your scenes here
+                  </p>
                 </div>
-              ))
-            )}
+              ) : (
+                scenes.map((scene) => (
+                  <div
+                    key={scene.id}
+                    className={`note-card${activeSceneId === scene.id ? ' active' : ''}`}
+                    onClick={() => scrollToScene(scene.id)}
+                  >
+                    <div className="note-card-header">
+                      <span className="note-card-badge">S{scene.number}</span>
+                      <span className="note-card-scene-name">{scene.text}</span>
+                    </div>
+                    <textarea
+                      className="note-card-textarea"
+                      placeholder="Notes for this scene..."
+                      value={sceneNotes[scene.id] || ''}
+                      onChange={(e) => setSceneNotes(prev => ({ ...prev, [scene.id]: e.target.value }))}
+                      onClick={(e) => e.stopPropagation()}
+                      rows={2}
+                    />
+                  </div>
+                ))
+              )}
+            </div>
+
+            <TemporaryStoryboard scenes={scenes} />
           </aside>
 
         </div>
